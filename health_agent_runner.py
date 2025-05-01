@@ -23,10 +23,10 @@ def run_health_agent():
     """Run the health sub-agent with enhanced ML capabilities."""
     logger.info("Starting Health Agent with ML enhancements")
     
-    # Initialize the API client
-    client = SpringApiClient()
+    # Initialize the API client - use the Flask app API endpoints
+    client = SpringApiClient(base_url="http://localhost:5000/api")
     if not client.authenticate():
-        logger.error("Failed to authenticate with Spring Boot API")
+        logger.error("Failed to authenticate with API")
         return False
     
     # Initialize the ML analyzer
@@ -37,23 +37,31 @@ def run_health_agent():
     start_date = end_date - timedelta(days=30)
     
     # Get health data from the API
+    logger.info("Fetching steps data...")
     steps_data = client.get_health_data(
         data_type="steps",
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat()
     )
     
+    logger.info("Fetching sleep data...")
     sleep_data = client.get_health_data(
         data_type="sleep",
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat()
     )
     
+    logger.info("Fetching heart rate data...")
     heart_rate_data = client.get_health_data(
         data_type="heart_rate",
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat()
     )
+    
+    # Log data count to debug
+    logger.info(f"Retrieved {len(steps_data) if steps_data else 0} steps records")
+    logger.info(f"Retrieved {len(sleep_data) if sleep_data else 0} sleep records")
+    logger.info(f"Retrieved {len(heart_rate_data) if heart_rate_data else 0} heart rate records")
     
     if not steps_data and not sleep_data and not heart_rate_data:
         logger.warning("No health data available for analysis")

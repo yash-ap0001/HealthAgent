@@ -277,7 +277,7 @@ def api_health_data():
             'date': str(data.date),
             'value': data.value,
             'unit': data.unit,
-            'metadata': data.metadata,
+            'meta_data': data.meta_data,  # Fixed field name to match model
             'source': data.source,
             'created_at': str(data.created_at),
             'updated_at': str(data.updated_at)
@@ -293,7 +293,7 @@ def api_health_data():
             date=datetime.strptime(data.get('date'), '%Y-%m-%d').date(),
             value=data.get('value'),
             unit=data.get('unit'),
-            metadata=data.get('metadata'),
+            meta_data=data.get('meta_data'),  # Fixed field name to match model
             source=data.get('source')
         )
         

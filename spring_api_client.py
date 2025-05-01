@@ -163,8 +163,10 @@ class SpringApiClient:
             url = f"{self.base_url}/insights"
             params = {}
             
-            if user_id:
-                params['userId'] = user_id
+            # Use the correct parameter names for Flask API
+            user_id = user_id or self.user_id
+            params['user_id'] = user_id
+            
             if category:
                 params['category'] = category
             
@@ -196,6 +198,16 @@ class SpringApiClient:
         
         try:
             url = f"{self.base_url}/insights"
+            
+            # Make sure we're using our default user ID if not specified
+            if 'user_id' not in insight_data:
+                insight_data['user_id'] = self.user_id
+                
+            # Make sure all field names match our Flask model
+            if 'userId' in insight_data:
+                insight_data['user_id'] = insight_data.pop('userId')
+            if 'isActionable' in insight_data:
+                insight_data['is_actionable'] = insight_data.pop('isActionable')
             
             logger.info(f"Creating insight at {url}")
             response = requests.post(url, headers=self.get_headers(), json=insight_data)
