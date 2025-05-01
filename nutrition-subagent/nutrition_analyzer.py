@@ -11,7 +11,19 @@ import numpy as np
 from collections import defaultdict, Counter
 from typing import List, Dict, Any, Optional
 
-from .models import (
+# Import directly instead of using relative imports
+# These are imported by the nutrition_agent_runner using the custom import mechanism
+import sys
+import os
+from pathlib import Path
+
+# Add parent directory to path to allow absolute imports
+module_dir = Path(__file__).parent
+if str(module_dir) not in sys.path:
+    sys.path.append(str(module_dir))
+
+# Now import the classes
+from models import (
     NutritionData, 
     DailyNutritionSummary, 
     NutrientIntakeTrend, 
