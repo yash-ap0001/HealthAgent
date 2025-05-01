@@ -11,9 +11,34 @@ from flask import current_app
 
 from app import db
 from models import HealthData, Insight, User
-from nutrition_subagent.api_client import NutritionApiClient
-from nutrition_subagent.nutrition_analyzer import NutritionAnalyzer
-from nutrition_subagent.insights_engine import NutritionInsightsEngine
+# Import nutrition sub-agent modules
+# We use this approach to handle the hyphen in the directory name
+import sys
+import importlib.util
+from pathlib import Path
+
+# Helper function to import from a directory with a hyphen
+def import_from_dir_with_hyphen(module_name, path):
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+# Get absolute paths to the modules
+base_dir = Path(__file__).parent
+api_client_path = base_dir / "nutrition-subagent" / "api_client.py"
+analyzer_path = base_dir / "nutrition-subagent" / "nutrition_analyzer.py"
+insights_path = base_dir / "nutrition-subagent" / "insights_engine.py"
+
+# Import the modules
+api_client_module = import_from_dir_with_hyphen("api_client", api_client_path)
+analyzer_module = import_from_dir_with_hyphen("nutrition_analyzer", analyzer_path)
+insights_module = import_from_dir_with_hyphen("insights_engine", insights_path)
+
+# Get the classes
+NutritionApiClient = api_client_module.NutritionApiClient
+NutritionAnalyzer = analyzer_module.NutritionAnalyzer
+NutritionInsightsEngine = insights_module.NutritionInsightsEngine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
