@@ -60,6 +60,22 @@
             </div>
         </div>
         
+        {% if has_enough_data %}
+        <div class="row mb-4">
+            <div class="col-md-12 text-center">
+                <form action="{{ url_for('run_analysis') }}" method="post">
+                    <button type="submit" class="btn btn-primary">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-graph-up" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M0 0h1v15h15v1H0zm14.817 3.113a.5.5 0 0 1 .07.704l-4.5 5.5a.5.5 0 0 1-.74.037L7.06 6.767l-3.656 5.027a.5.5 0 0 1-.808-.588l4-5.5a.5.5 0 0 1 .758-.06l2.609 2.61 4.15-5.073a.5.5 0 0 1 .704-.07Z"/>
+                        </svg>
+                        Run AI Health Analysis
+                    </button>
+                </form>
+                <p class="text-muted mt-2">Generate new insights from your health data using our ML analyzer</p>
+            </div>
+        </div>
+        {% endif %}
+        
         <h2 class="mb-3">Health Insights</h2>
         <div class="row">
             <div class="col-md-12">
@@ -82,7 +98,7 @@
                                         {{ insight.recommendation }}
                                     </div>
                                 {% endif %}
-                                <small class="text-muted">Generated on {{ insight.created_at[:10] }}</small>
+                                <small class="text-muted">Generated on {{ insight.created_at }}</small>
                             </div>
                         </div>
                     {% endfor %}

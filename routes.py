@@ -11,6 +11,7 @@ from models import User, HealthData, Insight
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Home route
 @app.route('/')
