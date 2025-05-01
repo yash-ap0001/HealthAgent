@@ -23,8 +23,88 @@ def run_health_agent():
     """Run the health sub-agent with enhanced ML capabilities."""
     logger.info("Starting Health Agent with ML enhancements")
     
-    # Initialize the API client - use the Flask app API endpoints
-    client = SpringApiClient(base_url="http://localhost:5000/api")
+    # Initialize the API client - use direct database access instead of API calls
+    # This avoids making HTTP requests to our own server while processing a request
+    try:
+        from models import User, HealthData, Insight
+        from app import db
+        import json
+        
+        # Mock API client with direct database access
+        class DirectDBClient:
+            def __init__(self, user_id=1):
+                self.user_id = user_id
+            
+            def authenticate(self):
+                return True
+            
+            def get_health_data(self, user_id=None, data_type=None, start_date=None, end_date=None):
+                user_id = user_id or self.user_id
+                query = HealthData.query.filter(HealthData.user_id == user_id)
+                
+                if data_type:
+                    query = query.filter(HealthData.data_type == data_type)
+                
+                if start_date:
+                    query = query.filter(HealthData.date >= datetime.fromisoformat(start_date).date())
+                
+                if end_date:
+                    query = query.filter(HealthData.date <= datetime.fromisoformat(end_date).date())
+                
+                records = query.order_by(HealthData.date).all()
+                
+                # Convert to dictionary format expected by the ML analyzer
+                return [{
+                    'id': data.id,
+                    'user_id': data.user_id,
+                    'data_type': data.data_type,
+                    'date': str(data.date),
+                    'value': data.value,
+                    'unit': data.unit,
+                    'meta_data': data.meta_data,
+                    'source': data.source
+                } for data in records]
+            
+            def create_insight(self, insight_data):
+                try:
+                    # Convert camelCase to snake_case if needed
+                    if 'userId' in insight_data:
+                        insight_data['user_id'] = insight_data.pop('userId')
+                    if 'isActionable' in insight_data:
+                        insight_data['is_actionable'] = insight_data.pop('isActionable')
+                    
+                    new_insight = Insight(
+                        user_id=insight_data.get('user_id', self.user_id),
+                        category=insight_data.get('category'),
+                        title=insight_data.get('title'),
+                        description=insight_data.get('description'),
+                        severity=insight_data.get('severity'),
+                        is_actionable=insight_data.get('is_actionable', True),
+                        recommendation=insight_data.get('recommendation')
+                    )
+                    
+                    db.session.add(new_insight)
+                    db.session.commit()
+                    
+                    return {
+                        'id': new_insight.id,
+                        'message': 'Insight created successfully'
+                    }
+                except Exception as e:
+                    logger.error(f"Error creating insight: {str(e)}")
+                    db.session.rollback()
+                    return None
+        
+        # Use the direct DB client
+        client = DirectDBClient()
+        logger.info("Using direct database access for health agent")
+    
+    except Exception as e:
+        logger.error(f"Failed to initialize direct DB client: {str(e)}")
+        logger.info("Falling back to API client")
+        # Fall back to API client if direct DB access fails
+        client = SpringApiClient(base_url="http://localhost:5000/api")
+    
     if not client.authenticate():
         logger.error("Failed to authenticate with API")
         return False
