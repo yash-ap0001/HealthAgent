@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+import json
+import logging
 from flask import render_template, request, jsonify, redirect, url_for, flash
 from flask_login import login_user, current_user, logout_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -6,6 +8,9 @@ from sqlalchemy import func
 
 from app import app, db
 from models import User, HealthData, Insight
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
 # Home route
 @app.route('/')
@@ -34,10 +39,28 @@ def dashboard():
         HealthData.date >= thirty_days_ago
     ).scalar() or 0
     
+    # Extract metadata for steps
+    steps_metadata = []
+    for data in steps_data:
+        meta = {}
+        if data.meta_data:
+            try:
+                meta = json.loads(data.meta_data)
+            except:
+                pass
+        steps_metadata.append(meta)
+    
+    # Calculate steps goal achievement rate
+    step_goal = 10000
+    goal_achievements = [min(data.value / step_goal, 1.0) for data in steps_data]
+    goal_achievement_rate = sum(goal_achievements) / len(goal_achievements) if goal_achievements else 0
+    
     stats['steps'] = {
         'average': round(steps_avg),
         'data': [(str(data.date), data.value) for data in steps_data],
-        'goal': 10000  # Default step goal
+        'metadata': steps_metadata,
+        'goal': step_goal,
+        'goal_rate': goal_achievement_rate * 100
     }
     
     # Sleep data
@@ -53,10 +76,32 @@ def dashboard():
         HealthData.date >= thirty_days_ago
     ).scalar() or 0
     
+    # Extract metadata for sleep
+    sleep_metadata = []
+    for data in sleep_data:
+        meta = {}
+        if data.meta_data:
+            try:
+                meta = json.loads(data.meta_data)
+            except:
+                pass
+        sleep_metadata.append(meta)
+    
+    # Calculate sleep quality metrics
+    sleep_quality = [meta.get('sleep_quality', 70) for meta in sleep_metadata if 'sleep_quality' in meta]
+    avg_sleep_quality = sum(sleep_quality) / len(sleep_quality) if sleep_quality else 0
+    
     stats['sleep'] = {
         'average': round(sleep_avg, 1),
         'data': [(str(data.date), data.value) for data in sleep_data],
-        'goal': 8.0  # Default sleep goal in hours
+        'metadata': sleep_metadata,
+        'goal': 8.0,  # Default sleep goal in hours
+        'quality': avg_sleep_quality,
+        'phases': {
+            'deep': sum(meta.get('deep_sleep', 0) for meta in sleep_metadata) / len(sleep_metadata) if sleep_metadata else 0,
+            'light': sum(meta.get('light_sleep', 0) for meta in sleep_metadata) / len(sleep_metadata) if sleep_metadata else 0,
+            'rem': sum(meta.get('rem_sleep', 0) for meta in sleep_metadata) / len(sleep_metadata) if sleep_metadata else 0
+        }
     }
     
     # Heart rate data
@@ -72,21 +117,65 @@ def dashboard():
         HealthData.date >= thirty_days_ago
     ).scalar() or 0
     
+    # Extract metadata for heart rate
+    hr_metadata = []
+    for data in hr_data:
+        meta = {}
+        if data.meta_data:
+            try:
+                meta = json.loads(data.meta_data)
+            except:
+                pass
+        hr_metadata.append(meta)
+    
+    # Calculate heart rate zones
+    zones = {
+        'rest': 0,
+        'moderate': 0,
+        'intense': 0
+    }
+    zone_count = 0
+    for meta in hr_metadata:
+        if 'zones' in meta:
+            zones['rest'] += meta['zones'].get('rest', 0)
+            zones['moderate'] += meta['zones'].get('moderate', 0)
+            zones['intense'] += meta['zones'].get('intense', 0)
+            zone_count += 1
+    
+    if zone_count > 0:
+        zones['rest'] = zones['rest'] / zone_count
+        zones['moderate'] = zones['moderate'] / zone_count
+        zones['intense'] = zones['intense'] / zone_count
+    
     stats['heart_rate'] = {
         'average': round(hr_avg),
         'data': [(str(data.date), data.value) for data in hr_data],
-        'threshold': 70  # Default resting heart rate threshold
+        'metadata': hr_metadata,
+        'threshold': 70,  # Default resting heart rate threshold
+        'zones': zones
     }
     
     # Get recent insights
     insights = Insight.query.filter(
         Insight.user_id == current_user.id
-    ).order_by(Insight.created_at.desc()).limit(5).all()
+    ).order_by(Insight.created_at.desc()).all()
+    
+    # Group insights by category
+    insights_by_category = {}
+    for insight in insights:
+        if insight.category not in insights_by_category:
+            insights_by_category[insight.category] = []
+        insights_by_category[insight.category].append(insight)
+    
+    # Determine if we have enough data for ML analysis
+    has_enough_data = len(steps_data) >= 7 and len(sleep_data) >= 7 and len(hr_data) >= 7
     
     return render_template('dashboard.html', 
                           user=current_user, 
                           stats=stats, 
-                          insights=insights)
+                          insights=insights[:5],  # 5 most recent for the main list
+                          insights_by_category=insights_by_category,
+                          has_enough_data=has_enough_data)
 
 # Login route
 @app.route('/login', methods=['GET', 'POST'])
@@ -266,6 +355,122 @@ def api_insights():
             'id': new_insight.id,
             'message': 'Insight created successfully'
         }), 201
+
+# Run health agent analysis
+@app.route('/run-analysis', methods=['POST'])
+@login_required
+def run_analysis():
+    """Run the health agent ML analysis to generate new insights."""
+    try:
+        from health_agent_runner import run_health_agent
+        
+        success = run_health_agent()
+        if success:
+            flash('Health analysis completed successfully. New insights may have been generated.', 'success')
+        else:
+            flash('Health analysis failed to complete. Please try again later.', 'warning')
+            
+    except Exception as e:
+        logger.error(f"Error running health analysis: {str(e)}")
+        flash('An error occurred during health analysis. Please try again later.', 'danger')
+    
+    return redirect(url_for('dashboard'))
+
+# Health metrics API for ML analysis
+@app.route('/api/ml/anomalies', methods=['POST'])
+@login_required
+def detect_anomalies():
+    """Use ML to detect anomalies in health data."""
+    try:
+        from ml_analyzer import HealthMLAnalyzer
+        
+        data = request.json
+        analyzer = HealthMLAnalyzer()
+        
+        health_data = data.get('health_data', [])
+        contamination = data.get('contamination', 0.05)
+        
+        result = analyzer.detect_anomalies(health_data, contamination)
+        return jsonify({
+            'status': 'success',
+            'anomalies': result
+        })
+        
+    except Exception as e:
+        logger.error(f"Error detecting anomalies: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/ml/forecast', methods=['POST'])
+@login_required
+def forecast_values():
+    """Use ML to forecast future health metrics."""
+    try:
+        from ml_analyzer import HealthMLAnalyzer
+        
+        data = request.json
+        analyzer = HealthMLAnalyzer()
+        
+        health_data = data.get('health_data', [])
+        days = data.get('days', 7)
+        
+        result = analyzer.forecast_values(health_data, days)
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error forecasting values: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/ml/patterns', methods=['POST'])
+@login_required
+def identify_patterns():
+    """Use ML to identify patterns in health data."""
+    try:
+        from ml_analyzer import HealthMLAnalyzer
+        
+        data = request.json
+        analyzer = HealthMLAnalyzer()
+        
+        health_data = data.get('health_data', [])
+        clusters = data.get('clusters', 3)
+        
+        result = analyzer.identify_patterns(health_data, clusters)
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error identifying patterns: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/ml/correlation', methods=['POST'])
+@login_required
+def analyze_correlation():
+    """Use ML to analyze correlation between two health metrics."""
+    try:
+        from ml_analyzer import HealthMLAnalyzer
+        
+        data = request.json
+        analyzer = HealthMLAnalyzer()
+        
+        series1 = data.get('series1', [])
+        series2 = data.get('series2', [])
+        
+        result = analyzer.analyze_correlation(series1, series2)
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error analyzing correlation: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 # Error handlers
 @app.errorhandler(404)
