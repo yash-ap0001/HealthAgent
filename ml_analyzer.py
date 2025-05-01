@@ -103,20 +103,34 @@ class HealthMLAnalyzer:
             # Extract anomalies (anomaly == -1)
             anomalies = df[df['anomaly'] == -1]
             
-            # Calculate z-scores for severity
-            df['zscore'] = stats.zscore(df['value'])
+            # Calculate z-scores for severity safely
+            try:
+                df['zscore'] = stats.zscore(df['value'])
+            except Exception as e:
+                logger.warning(f"Could not calculate z-scores: {str(e)}")
+                # Fallback to using simple deviation from mean
+                mean_val = df['value'].mean()
+                std_val = df['value'].std() if len(df) > 1 else 1.0
+                if std_val == 0:  # Avoid division by zero
+                    std_val = 1.0
+                df['zscore'] = (df['value'] - mean_val) / std_val
             
             # Format results
             result = []
             for _, row in anomalies.iterrows():
-                result.append({
-                    'date': row['date'].strftime('%Y-%m-%d'),
-                    'value': row['value'],
-                    'zscore': abs(row['zscore']),
-                    'direction': 'high' if row['zscore'] > 0 else 'low',
-                    'data_type': row['data_type'],
-                    'id': row['id']
-                })
+                try:
+                    date_str = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
+                    zscore = row['zscore'] if not pd.isna(row['zscore']) else 0
+                    result.append({
+                        'date': date_str,
+                        'value': float(row['value']),
+                        'zscore': abs(float(zscore)),
+                        'direction': 'high' if zscore > 0 else 'low',
+                        'data_type': str(row['data_type']),
+                        'id': int(row['id']) if pd.notna(row['id']) else None
+                    })
+                except Exception as detail_error:
+                    logger.warning(f"Error formatting anomaly row: {str(detail_error)}")
             
             return result
             
@@ -196,8 +210,27 @@ class HealthMLAnalyzer:
             }
         
         try:
-            # Extract day of week and value
-            df['day_of_week'] = df['date'].dt.dayofweek
+            # Make sure date is a proper datetime type
+            if 'date' in df.columns:
+                # Convert any string dates to datetime
+                if df['date'].dtype == 'object':
+                    try:
+                        df['date'] = pd.to_datetime(df['date'])
+                    except Exception as date_error:
+                        logger.warning(f"Error converting dates to datetime: {str(date_error)}")
+                        # Fallback to using index as days of week
+                        df['day_of_week'] = df.index % 7
+                else:
+                    # Extract day of week and value
+                    try:
+                        df['day_of_week'] = pd.to_datetime(df['date']).dt.dayofweek
+                    except Exception as dow_error:
+                        logger.warning(f"Error extracting day of week: {str(dow_error)}")
+                        # Fallback to using index as days of week
+                        df['day_of_week'] = df.index % 7
+            else:
+                # No date column available, use index as proxy
+                df['day_of_week'] = df.index % 7
             
             # Prepare features: day of week and value
             features = df[['day_of_week', 'value']].values
@@ -206,12 +239,12 @@ class HealthMLAnalyzer:
             scaled_features = self.scaler.fit_transform(features)
             
             # Apply K-means clustering
-            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+            kmeans = KMeans(n_clusters=min(num_clusters, len(df) // 2), random_state=42)
             df['cluster'] = kmeans.fit_predict(scaled_features)
             
             # Analyze clusters
             patterns = []
-            for cluster_id in range(num_clusters):
+            for cluster_id in range(kmeans.n_clusters):
                 cluster_data = df[df['cluster'] == cluster_id]
                 
                 # Skip empty clusters
@@ -220,25 +253,27 @@ class HealthMLAnalyzer:
                 
                 # Calculate statistics
                 avg_value = cluster_data['value'].mean()
-                std_value = cluster_data['value'].std()
+                std_value = cluster_data['value'].std() if len(cluster_data) > 1 else 0
                 
                 # Get most common days of week in this cluster
                 day_counts = cluster_data['day_of_week'].value_counts()
-                dominant_days = day_counts[day_counts > day_counts.mean()].index.tolist()
+                # Set a minimum threshold or use mean
+                threshold = max(1, day_counts.mean() if len(day_counts) > 0 else 0)
+                dominant_days = day_counts[day_counts >= threshold].index.tolist()
                 
                 # Convert day numbers to names
                 day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                dominant_day_names = [day_names[day] for day in dominant_days]
+                dominant_day_names = [day_names[int(day) % 7] for day in dominant_days]
                 
                 patterns.append({
                     'cluster_id': int(cluster_id),
-                    'count': len(cluster_data),
+                    'count': int(len(cluster_data)),
                     'average': float(avg_value),
                     'std_dev': float(std_value),
                     'dominant_days': dominant_day_names,
                     'description': self._generate_pattern_description(
-                        df['data_type'].iloc[0], 
-                        avg_value, 
+                        str(df['data_type'].iloc[0]), 
+                        float(avg_value), 
                         dominant_day_names
                     )
                 })
