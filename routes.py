@@ -377,6 +377,26 @@ def run_analysis():
     
     return redirect(url_for('dashboard'))
 
+# Run nutrition agent analysis
+@app.route('/run-nutrition-analysis', methods=['POST'])
+@login_required
+def run_nutrition_analysis():
+    """Run the nutrition agent ML analysis to generate new insights."""
+    try:
+        from nutrition_agent_runner import run_nutrition_agent
+        
+        result = run_nutrition_agent()
+        if result['success']:
+            flash(f"Nutrition analysis completed successfully. {result['insights_generated']} new insights generated.", 'success')
+        else:
+            flash(f"Nutrition analysis failed: {result['message']}", 'warning')
+            
+    except Exception as e:
+        logger.error(f"Error running nutrition analysis: {str(e)}")
+        flash('An error occurred during nutrition analysis. Please try again later.', 'danger')
+    
+    return redirect(url_for('dashboard'))
+
 # Health metrics API for ML analysis
 @app.route('/api/ml/anomalies', methods=['POST'])
 @login_required
