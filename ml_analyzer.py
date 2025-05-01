@@ -103,29 +103,33 @@ class HealthMLAnalyzer:
             # Extract anomalies (anomaly == -1)
             anomalies = df[df['anomaly'] == -1]
             
-            # Calculate z-scores for severity safely
-            try:
-                df['zscore'] = stats.zscore(df['value'])
-            except Exception as e:
-                logger.warning(f"Could not calculate z-scores: {str(e)}")
-                # Fallback to using simple deviation from mean
+            # If no anomalies detected, try a more sensitive approach
+            if len(anomalies) == 0:
+                # Simplify to using mean ± 2*std as anomaly threshold
                 mean_val = df['value'].mean()
                 std_val = df['value'].std() if len(df) > 1 else 1.0
-                if std_val == 0:  # Avoid division by zero
-                    std_val = 1.0
-                df['zscore'] = (df['value'] - mean_val) / std_val
+                upper_threshold = mean_val + 2 * std_val
+                lower_threshold = mean_val - 2 * std_val
+                anomalies = df[(df['value'] > upper_threshold) | (df['value'] < lower_threshold)]
+            
+            # Calculate simple z-scores
+            mean_val = df['value'].mean()
+            std_val = df['value'].std() if len(df) > 1 else 1.0
+            if std_val == 0:  # Avoid division by zero
+                std_val = 1.0
             
             # Format results
             result = []
             for _, row in anomalies.iterrows():
                 try:
                     date_str = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
-                    zscore = row['zscore'] if not pd.isna(row['zscore']) else 0
+                    # Calculate z-score directly here
+                    z = (row['value'] - mean_val) / std_val
                     result.append({
                         'date': date_str,
                         'value': float(row['value']),
-                        'zscore': abs(float(zscore)),
-                        'direction': 'high' if zscore > 0 else 'low',
+                        'zscore': abs(float(z)),
+                        'direction': 'high' if row['value'] > mean_val else 'low',
                         'data_type': str(row['data_type']),
                         'id': int(row['id']) if pd.notna(row['id']) else None
                     })
@@ -174,7 +178,7 @@ class HealthMLAnalyzer:
             for i, date in enumerate(forecast_dates):
                 result.append({
                     'date': date.strftime('%Y-%m-%d'),
-                    'value': max(0, forecast[i]),  # Ensure non-negative values
+                    'value': max(0, forecast.iloc[i] if i < len(forecast) else forecast.iloc[-1]),  # Ensure non-negative values and safe access
                     'data_type': df['data_type'].iloc[0]
                 })
             
@@ -210,42 +214,47 @@ class HealthMLAnalyzer:
             }
         
         try:
-            # Make sure date is a proper datetime type
-            if 'date' in df.columns:
-                # Convert any string dates to datetime
-                if df['date'].dtype == 'object':
-                    try:
-                        df['date'] = pd.to_datetime(df['date'])
-                    except Exception as date_error:
-                        logger.warning(f"Error converting dates to datetime: {str(date_error)}")
-                        # Fallback to using index as days of week
-                        df['day_of_week'] = df.index % 7
-                else:
-                    # Extract day of week and value
-                    try:
-                        df['day_of_week'] = pd.to_datetime(df['date']).dt.dayofweek
-                    except Exception as dow_error:
-                        logger.warning(f"Error extracting day of week: {str(dow_error)}")
-                        # Fallback to using index as days of week
-                        df['day_of_week'] = df.index % 7
-            else:
-                # No date column available, use index as proxy
-                df['day_of_week'] = df.index % 7
+            # Simple approach: create a weekday classifier based on date pattern
+            # Create a new dataframe with just the needed columns
+            analysis_df = pd.DataFrame({
+                'value': df['value'].values
+            })
+            
+            # Try to determine weekday from the date
+            weekdays = []
+            for i, row in df.iterrows():
+                try:
+                    if isinstance(row['date'], pd.Timestamp) or isinstance(row['date'], datetime):
+                        weekday = row['date'].weekday()
+                    elif isinstance(row['date'], str):
+                        dt = pd.to_datetime(row['date'])
+                        weekday = dt.weekday()
+                    else:
+                        # Fallback to assigning based on index
+                        weekday = i % 7
+                    weekdays.append(weekday)
+                except:
+                    # Fallback to assigning based on index
+                    weekdays.append(i % 7)
+            
+            analysis_df['day_of_week'] = weekdays
             
             # Prepare features: day of week and value
-            features = df[['day_of_week', 'value']].values
+            features = analysis_df[['day_of_week', 'value']].values
             
             # Scale features
             scaled_features = self.scaler.fit_transform(features)
             
             # Apply K-means clustering
-            kmeans = KMeans(n_clusters=min(num_clusters, len(df) // 2), random_state=42)
-            df['cluster'] = kmeans.fit_predict(scaled_features)
+            num_clusters = min(num_clusters, len(df) // 2)
+            num_clusters = max(2, num_clusters)  # Ensure at least 2 clusters
+            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+            analysis_df['cluster'] = kmeans.fit_predict(scaled_features)
             
             # Analyze clusters
             patterns = []
             for cluster_id in range(kmeans.n_clusters):
-                cluster_data = df[df['cluster'] == cluster_id]
+                cluster_data = analysis_df[analysis_df['cluster'] == cluster_id]
                 
                 # Skip empty clusters
                 if len(cluster_data) == 0:
@@ -265,6 +274,11 @@ class HealthMLAnalyzer:
                 day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
                 dominant_day_names = [day_names[int(day) % 7] for day in dominant_days]
                 
+                # Get data type from original dataframe
+                data_type = "unknown"
+                if 'data_type' in df.columns and len(df) > 0:
+                    data_type = str(df['data_type'].iloc[0])
+                
                 patterns.append({
                     'cluster_id': int(cluster_id),
                     'count': int(len(cluster_data)),
@@ -272,7 +286,7 @@ class HealthMLAnalyzer:
                     'std_dev': float(std_value),
                     'dominant_days': dominant_day_names,
                     'description': self._generate_pattern_description(
-                        str(df['data_type'].iloc[0]), 
+                        data_type, 
                         float(avg_value), 
                         dominant_day_names
                     )
