@@ -1,0 +1,201 @@
+{% extends 'base.html' %}
+
+{% block title %}Health AI System - Dashboard{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h1 class="mb-4">Welcome, {{ user.username }}!</h1>
+        
+        <h2 class="mb-3">Health Stats</h2>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="health-stat stat-steps">
+                    <h3>{{ stats.steps.average }}</h3>
+                    <p>Avg. Daily Steps</p>
+                    <div class="progress" style="height: 10px">
+                        {% set steps_percentage = (stats.steps.average / stats.steps.goal) * 100 if stats.steps.average else 0 %}
+                        {% set steps_percentage = [steps_percentage, 100]|min %}
+                        <div class="progress-bar bg-primary" role="progressbar" style="width: {{ steps_percentage }}%" aria-valuenow="{{ steps_percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <small class="text-muted">Goal: {{ stats.steps.goal }} steps</small>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="health-stat stat-sleep">
+                    <h3>{{ stats.sleep.average }}</h3>
+                    <p>Avg. Hours of Sleep</p>
+                    <div class="progress" style="height: 10px">
+                        {% set sleep_percentage = (stats.sleep.average / stats.sleep.goal) * 100 if stats.sleep.average else 0 %}
+                        {% set sleep_percentage = [sleep_percentage, 100]|min %}
+                        <div class="progress-bar bg-warning" role="progressbar" style="width: {{ sleep_percentage }}%" aria-valuenow="{{ sleep_percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <small class="text-muted">Goal: {{ stats.sleep.goal }} hours</small>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="health-stat stat-heart">
+                    <h3>{{ stats.heart_rate.average }}</h3>
+                    <p>Avg. Resting Heart Rate</p>
+                    <div class="progress" style="height: 10px">
+                        {% set hr_percentage = ((stats.heart_rate.threshold - stats.heart_rate.average) / stats.heart_rate.threshold) * 100 if stats.heart_rate.average and stats.heart_rate.average < stats.heart_rate.threshold else 0 %}
+                        {% set hr_percentage = [hr_percentage, 100]|min %}
+                        <div class="progress-bar bg-danger" role="progressbar" style="width: {{ hr_percentage }}%" aria-valuenow="{{ hr_percentage }}" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <small class="text-muted">Threshold: {{ stats.heart_rate.threshold }} bpm</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card shadow-sm">
+                    <div class="card-header">
+                        <h5 class="mb-0">Activity Trends</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="healthChart" height="250"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <h2 class="mb-3">Health Insights</h2>
+        <div class="row">
+            <div class="col-md-12">
+                {% if insights %}
+                    {% for insight in insights %}
+                        <div class="card insight-card severity-{{ insight.severity }} mb-3 shadow-sm">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h5 class="card-title mb-0">{{ insight.title }}</h5>
+                                    <span class="badge {% if insight.category == 'activity' %}bg-primary{% elif insight.category == 'sleep' %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+                                        {{ insight.category|capitalize }}
+                                    </span>
+                                </div>
+                                <p class="card-text">{{ insight.description }}</p>
+                                {% if insight.recommendation %}
+                                    <div class="alert alert-info">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-lightbulb-fill me-2" viewBox="0 0 16 16">
+                                            <path d="M2 6a6 6 0 1 1 10.174 4.31c-.203.196-.359.4-.453.619l-.762 1.769A.5.5 0 0 1 10.5 13h-5a.5.5 0 0 1-.46-.302l-.761-1.77a1.964 1.964 0 0 0-.453-.618A5.984 5.984 0 0 1 2 6m3 8.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1l-.224.447a1 1 0 0 1-.894.553H6.618a1 1 0 0 1-.894-.553L5.5 15a.5.5 0 0 1-.5-.5"/>
+                                        </svg>
+                                        {{ insight.recommendation }}
+                                    </div>
+                                {% endif %}
+                                <small class="text-muted">Generated on {{ insight.created_at[:10] }}</small>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="alert alert-info">
+                        <p>No insights available yet. Connect your devices and add more health data to get personalized insights.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Chart data
+        const stepsData = {{ stats.steps.data|tojson }};
+        const sleepData = {{ stats.sleep.data|tojson }};
+        const heartRateData = {{ stats.heart_rate.data|tojson }};
+        
+        // Extract dates and values
+        const labels = stepsData.map(item => item[0]);
+        const stepsValues = stepsData.map(item => item[1]);
+        const sleepValues = sleepData.map(item => item[1]);
+        const heartRateValues = heartRateData.map(item => item[1]);
+        
+        // Create chart
+        const ctx = document.getElementById('healthChart').getContext('2d');
+        const healthChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Steps',
+                        data: stepsValues,
+                        borderColor: '#007bff',
+                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                        yAxisID: 'y1',
+                        tension: 0.2,
+                        fill: true
+                    },
+                    {
+                        label: 'Sleep (hours)',
+                        data: sleepValues,
+                        borderColor: '#ffc107',
+                        backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                        yAxisID: 'y2',
+                        tension: 0.2,
+                        fill: true
+                    },
+                    {
+                        label: 'Heart Rate (bpm)',
+                        data: heartRateValues,
+                        borderColor: '#dc3545',
+                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                        yAxisID: 'y3',
+                        tension: 0.2,
+                        fill: true
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                stacked: false,
+                scales: {
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: {
+                            display: true,
+                            text: 'Steps'
+                        },
+                        min: 0
+                    },
+                    y2: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Sleep (hours)'
+                        },
+                        min: 0,
+                        max: 12,
+                        grid: {
+                            drawOnChartArea: false
+                        }
+                    },
+                    y3: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Heart Rate (bpm)'
+                        },
+                        min: 40,
+                        max: 120,
+                        grid: {
+                            drawOnChartArea: false
+                        }
+                    }
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}
