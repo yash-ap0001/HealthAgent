@@ -1,4 +1,4 @@
-# Health AI Agent System
+# HealthAgent
 
 A comprehensive health management system that consists of a Spring Boot backend with PostgreSQL database integration and a Python-based Health Sub-Agent that analyzes health data and generates insights.
 
@@ -42,4 +42,4 @@ A comprehensive health management system that consists of a Spring Boot backend 
    ```
    cd spring-backend
    ./mvnw spring-boot:run
-   
+   ```
